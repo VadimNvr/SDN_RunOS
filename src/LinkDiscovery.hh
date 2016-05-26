@@ -26,8 +26,11 @@
 #include "Switch.hh"
 #include "Application.hh"
 #include "Loader.hh"
+#include "Topology.hh"
 #include "OFMessageHandler.hh"
 #include "ILinkDiscovery.hh"
+#include "DelayManager.hh"
+#include "StaticFlowPusher.hh"
 
 struct DiscoveredLink {
     typedef std::chrono::time_point<std::chrono::steady_clock>
@@ -51,11 +54,13 @@ public:
     std::string orderingName() const override;
     std::unique_ptr<OFMessageHandler> makeOFMessageHandler() override;
     bool isPostreq(const std::string &name) const override;
+    //std::pair<size_t, size_t> getLink(Switch *sw, size_t port) { return lldp_links[sw][port]; }
 
 signals:
     void linkDiscovered(switch_and_port from, switch_and_port to);
     void linkBroken(switch_and_port from, switch_and_port to);
     void lldpReceived(switch_and_port from, switch_and_port to);
+    void dmpRecieved(unsigned short link_id, unsigned pkt_id, unsigned long long t0, unsigned long long t1);
 
 public slots:
     void portUp(Switch* dp, of13::Port port);
@@ -75,7 +80,10 @@ private:
     };
 
     unsigned c_poll_interval;
-    SwitchManager* m_switch_manager;
+    SwitchManager *m_switch_manager;
+    DelayManager  *m_delay_manager;
+    mutex lldpSendMutex;
+
     QTimer* m_timer;
 
     std::set<DiscoveredLink> m_links;

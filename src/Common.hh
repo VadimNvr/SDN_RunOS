@@ -24,6 +24,14 @@
 #include <QtCore>
 #include <fluid/OFConnection.hh>
 #include <fluid/of13msg.hh>
+#include <mutex>
+#include <map>
+#include <unordered_map>
+#include <list>
+
+#include <boost/thread/locks.hpp>
+#include <boost/thread/shared_mutex.hpp>
+
 using namespace fluid_base;
 using namespace fluid_msg;
 
@@ -34,6 +42,21 @@ using namespace fluid_msg;
 #endif
 
 #define FORMAT_DPID std::hex << std::setw(16) << std::setfill('0')
+
+#define EXISTS(a, b) (a.find(b) != a.end())
+#define EXIST2(a, b, c) (EXISTS(a, b) && EXISTS(a[b], c))
+
+namespace std 
+{
+	template<typename K, typename V> using HashMap = unordered_map<K, V>;
+	template<typename T> using ArrayList = vector<T>;
+}
+
+typedef boost::shared_mutex Lock;
+typedef boost::unique_lock< Lock > WriteLock;
+typedef boost::shared_lock< Lock > ReadLock;
+using std::HashMap;
+using std::ArrayList;
 
 Q_DECLARE_METATYPE(uint32_t)
 Q_DECLARE_METATYPE(uint64_t)

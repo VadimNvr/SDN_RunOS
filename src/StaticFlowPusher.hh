@@ -40,6 +40,9 @@ public:
     uint16_t eth_type();
     EthAddress eth_src();
     EthAddress eth_dst();
+    EthAddress eth_src_mask();
+    EthAddress eth_dst_mask();
+
     IPAddress ip_src();
     IPAddress ip_dst();
 
@@ -52,6 +55,8 @@ public:
     void eth_type(uint16_t type);
     void eth_src(std::string mac);
     void eth_dst(std::string mac);
+    void eth_src_mask(std::string mask);
+    void eth_dst_mask(std::string mask);
     void ip_src(std::string ip);
     void ip_dst(std::string ip);
 
@@ -67,7 +72,7 @@ class StaticFlowPusher : public Application, RestHandler {
     SIMPLE_APPLICATION(StaticFlowPusher, "static-flow-pusher")
 public:
     void init(Loader* loader, const Config& rootConfig) override;
-    void sendToSwitch(Switch* dp, FlowDesc* fd);
+    void sendToSwitch(Switch* dp, FlowDesc* fd, std::string ipSrcMask = "0.0.0.0");
 
     std::string restName() override { return "static-flow-pusher"; }
     bool eventable() override { return false; }
@@ -77,13 +82,15 @@ public:
 private:
     SwitchManager* sw_m;
     class FlowManager* flow_m;
+    HashMap<Switch *, Lock> sendLock;
 
     std::string def_act;
     std::unordered_map<std::string, json11::Json> flows_map;
     OFTransaction* new_flow;
     uint32_t start_prio;
 
-    of13::FlowMod formFlowMod(FlowDesc* fd, Switch *sw);
+    of13::FlowMod formFlowMod(FlowDesc* fd, Switch *sw, std::string mask = "0.0.0.0");
+
     FlowDesc readFlowFromConfig(Config config);
     void cleanFlowTable(OFConnection* ofconn);
     void sendDefault(Switch* sw);

@@ -24,6 +24,7 @@
 #include <thread>
 #include <sstream>
 #include <memory>
+#include <iostream>
 
 #include <fluid/OFServer.hh>
 
@@ -271,6 +272,9 @@ void SwitchScope::processTableMiss(of13::PacketIn& pi)
 
     DVLOG(10) << "Table miss on connection id=" << conn_id;
 
+    //uint32_t addr = pkt->readIPv4Src().getIPv4(); 
+    //printf("Table miss with packet ip = %u.%u.%u.%u\n", (addr >> 24U)&0xFF, (addr >> 16U)&0xFF, (addr >> 8U)&0xFF, addr & 0xFF);
+
     if (leaf == nullptr) {
         // The flow is not in the trace tree.
         // This means that it is new or outdated (deleted by hard timeout).
@@ -289,20 +293,20 @@ void SwitchScope::processTableMiss(of13::PacketIn& pi)
         if (flow->flags() & Flow::Disposable) {
             // Sometimes we don't need to create a new flow on the switch.
             // So, reply to the packet-in using packet-out message.
-            DVLOG(9) << "Sending packet-out";
+            // DVLOG(9) << "Sending packet-out";
 
-            of13::PacketOut po;
-            po.xid(pi.xid());
-            po.buffer_id(pi.buffer_id());
-            if (pi.buffer_id() == OFP_NO_BUFFER)
-                po.data(pi.data(), pi.data_len());
-            flow->initPacketOut(&po);
+            // of13::PacketOut po;
+            // po.xid(pi.xid());
+            // po.buffer_id(pi.buffer_id());
+            // if (pi.buffer_id() == OFP_NO_BUFFER)
+            //     po.data(pi.data(), pi.data_len());
+            // flow->initPacketOut(&po);
 
-            uint8_t* buffer = po.pack();
-            ofconn->send(buffer, po.length());
-            OFMsg::free_buffer(buffer);
+            // uint8_t* buffer = po.pack();
+            // ofconn->send(buffer, po.length());
+            // OFMsg::free_buffer(buffer);
 
-            flow->deleteLater();
+            // flow->deleteLater();
         } else {
             // In other cases we need to add newly created Flow into the
             // trace tree and rebuild it [TODO: incrementaly].

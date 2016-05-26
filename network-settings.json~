@@ -3,7 +3,7 @@
 "default": {
     "services": [
 	"testapp",
-	"delay-manager",
+	"delay-manager"
         "learning-switch",
         "rest-listener",
         "host-manager",
@@ -13,7 +13,7 @@
         "stp",
         "static-flow-pusher",
         "arp-handler",
-        "flow-manager"
+        "flow-manager",
     ],
 
     "static-flow-pusher" : {

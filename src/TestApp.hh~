@@ -1,0 +1,10 @@
+#pragma once
+
+#include "Application.hh"
+#include "Loader.hh"
+
+class TestApp : public Application {
+SIMPLE_APPLICATION(TestApp, "testapp")
+public:
+    void init(Loader* loader, const Config& config) override;
+};

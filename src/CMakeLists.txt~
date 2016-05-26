@@ -15,7 +15,6 @@ set(SOURCES
     Switch.cc
     LinkDiscovery.cc
     Topology.cc
-    DelayManager.cc
     # Apps
     TestApp.cc
     SimpleLearningSwitch.cc
@@ -37,8 +36,9 @@ set(SOURCES
     FlowManager.cc
     # Json
     json11.cpp
-    #Misk
+    #Delay
     TimeUtils.cpp
+    DelayManager.cc
 )
 
 include_directories(

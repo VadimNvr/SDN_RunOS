@@ -22,6 +22,9 @@
 struct switch_and_port {
     uint64_t dpid;
     uint32_t port;
+
+    switch_and_port(): dpid(0), port(0) {}
+    switch_and_port(uint64_t dpid, uint32_t port): dpid(dpid), port(port) {}
 };
 
 /**

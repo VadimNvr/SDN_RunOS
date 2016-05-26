@@ -38,6 +38,8 @@ struct FlowDescImpl {
     uint16_t eth_type{0};
     EthAddress eth_src{EthAddress()};
     EthAddress eth_dst{EthAddress()};
+    EthAddress eth_src_mask{EthAddress("ff:ff:ff:ff:ff:ff")};
+    EthAddress eth_dst_mask{EthAddress("ff:ff:ff:ff:ff:ff")};
     IPAddress ip_src{IPAddress()};
     IPAddress ip_dst{IPAddress()};
 
@@ -63,8 +65,14 @@ uint16_t FlowDesc::eth_type()
 EthAddress FlowDesc::eth_src()
 { return m->eth_src; }
 
+EthAddress FlowDesc::eth_src_mask()
+{ return m->eth_src_mask; }
+
 EthAddress FlowDesc::eth_dst()
 { return m->eth_dst; }
+
+EthAddress FlowDesc::eth_dst_mask()
+{ return m->eth_dst_mask; }
 
 IPAddress FlowDesc::ip_src()
 { return m->ip_src; }
@@ -93,8 +101,14 @@ void FlowDesc::eth_type(uint16_t type)
 void FlowDesc::eth_src(std::string mac)
 { m->eth_src = EthAddress(mac); }
 
+void FlowDesc::eth_src_mask(std::string mask)
+{ m->eth_src_mask = EthAddress(mask); }
+
 void FlowDesc::eth_dst(std::string mac)
 { m->eth_dst = EthAddress(mac); }
+
+void FlowDesc::eth_dst_mask(std::string mask)
+{ m->eth_dst_mask = EthAddress(mask); }
 
 void FlowDesc::ip_src(std::string ip)
 { m->ip_src = IPAddress(ip); }
@@ -144,7 +158,7 @@ void StaticFlowPusher::init(Loader* loader, const Config& rootConfig)
     }
 }
 
-of13::FlowMod StaticFlowPusher::formFlowMod(FlowDesc* fd, Switch* sw)
+of13::FlowMod StaticFlowPusher::formFlowMod(FlowDesc* fd, Switch* sw, std::string mask)
 {
     StaticFlow* sf = new StaticFlow;
 
@@ -159,24 +173,24 @@ of13::FlowMod StaticFlowPusher::formFlowMod(FlowDesc* fd, Switch* sw)
         sf->toTrace(TraceEntry::Load, oxm);
     }
     if (fd->eth_src().to_string() != "00:00:00:00:00:00") {
-        of13::EthSrc* oxm = new of13::EthSrc(fd->eth_src());
+        of13::EthSrc* oxm = new of13::EthSrc(fd->eth_src(), fd->eth_src_mask());
         fm.add_oxm_field(oxm);
         sf->toTrace(TraceEntry::Load, oxm);
     }
     if (fd->eth_dst().to_string() != "00:00:00:00:00:00") {
-        of13::EthDst* oxm = new of13::EthDst(fd->eth_dst());
+        of13::EthDst* oxm = new of13::EthDst(fd->eth_dst(), fd->eth_dst_mask());
         fm.add_oxm_field(oxm);
         sf->toTrace(TraceEntry::Load, oxm);
     }
 
     if (fd->ip_src().getIPv4() != IPAddress::IPv4from_string("0.0.0.0")) {
-        of13::IPv4Src* oxm = new of13::IPv4Src(fd->ip_src());
+        of13::IPv4Src* oxm = (mask == "0.0.0.0") ? new of13::IPv4Src(fd->ip_src()) : new of13::IPv4Src(fd->ip_src(), IPAddress(mask));
         fm.add_oxm_field(oxm);
         sf->toTrace(TraceEntry::Load, oxm);
         fd->eth_type(0x0800);
     }
     if (fd->ip_dst().getIPv4() != IPAddress::IPv4from_string("0.0.0.0")) {
-        of13::IPv4Dst* oxm = new of13::IPv4Dst(fd->ip_dst());
+        of13::IPv4Dst* oxm = (mask == "0.0.0.0") ? new of13::IPv4Dst(fd->ip_dst()) : new of13::IPv4Dst(fd->ip_dst(), IPAddress(mask));
         fm.add_oxm_field(oxm);
         sf->toTrace(TraceEntry::Load, oxm);
         fd->eth_type(0x0800);
@@ -278,9 +292,11 @@ void StaticFlowPusher::sendDefault(Switch *sw)
     }
 }
 
-void StaticFlowPusher::sendToSwitch(Switch* dp, FlowDesc* fd)
+void StaticFlowPusher::sendToSwitch(Switch* dp, FlowDesc* fd, std::string ipSrcMask)
 {
-    of13::FlowMod fm = formFlowMod(fd, dp);
+    of13::FlowMod fm = formFlowMod(fd, dp, ipSrcMask);
+    
+    WriteLock w_lock(sendLock[dp]);
     dp->send(&fm);
 }
 

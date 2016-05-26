@@ -24,7 +24,7 @@
 #include "LLDP.hh"
 #include "Controller.hh"
 
-REGISTER_APPLICATION(LinkDiscovery, {"switch-manager", "controller", ""})
+REGISTER_APPLICATION(LinkDiscovery, {"switch-manager", "controller", "delay-manager", ""})
 
 void LinkDiscovery::init(Loader *loader, const Config &rootConfig)
 {
@@ -40,9 +40,14 @@ void LinkDiscovery::init(Loader *loader, const Config &rootConfig)
     /* Get dependencies */
     Controller*    ctrl  = Controller::get(loader);
     m_switch_manager     = SwitchManager::get(loader);
+    m_delay_manager      = DelayManager::get(loader);
 
     /* Connect with other applications */
     ctrl->registerHandler(this);
+
+    QObject::connect(this, &LinkDiscovery::dmpRecieved,
+                     m_delay_manager, &DelayManager::onDmpReceived,
+                     Qt::QueuedConnection);
 
     QObject::connect(m_switch_manager, &SwitchManager::switchDiscovered,
          [this](Switch* dp) {
@@ -69,14 +74,13 @@ void LinkDiscovery::init(Loader *loader, const Config &rootConfig)
              LOG(INFO) << "Link broken: "
                      << FORMAT_DPID << from.dpid << ':' << from.port << " -> "
                      << FORMAT_DPID << to.dpid << ':' << to.port;
-
         });
 }
 
 void LinkDiscovery::startUp(Loader *)
 {
     // Start LLDP polling
-    m_timer->start(c_poll_interval * 1000);
+    m_timer->start(500);
 }
 
 void LinkDiscovery::portUp(Switch *dp, of13::Port port)
@@ -132,58 +136,83 @@ struct lldp_packet {
     uint8_t  dpid_sub;
     uint64_t dpid_data;
 
+    uint16_t id;
+    uint64_t left_time;
     uint16_t end;
 } TINS_END_PACK;
 
 void LinkDiscovery::sendLLDP(Switch *dp, of13::Port port)
 {
     lldp_packet lldp;
-    lldp.dst_mac = hton64(0x0180c200000eULL) >> 16ULL;
-    uint8_t* mac = port.hw_addr().get_data();
-    lldp.src_mac = hton64(((uint64_t) mac[0] << 40ULL) |
-                         ((uint64_t) mac[1] << 32ULL) |
-                         ((uint64_t) mac[2] << 24ULL) |
-                         ((uint64_t) mac[3] << 16ULL) |
-                         ((uint64_t) mac[4] << 8ULL) |
-                         (uint64_t) mac[5] ) >> 16ULL;
-    lldp.eth_type = hton16(LLDP_ETH_TYPE);
 
+    switch_and_port src(dp->id(), port.port_no());
+    long link_id = m_delay_manager->getLinkIdBySwitch(src);
+
+    if (link_id == -1) {
+        lldp.src_mac = 4;
+    }
+    else {
+        if (m_delay_manager->getLinkById(link_id)->to == src)
+            return;
+
+        char ethSrc[18]; //  xx:xx:xx:xx:xx:xx\0
+
+        getEth(link_id, 1, ethSrc);
+
+        uint8_t* mac = EthAddress(ethSrc).get_data();
+        lldp.src_mac = hton64(((uint64_t) mac[0] << 40ULL) |
+                             ((uint64_t) mac[1] << 32ULL) |
+                             ((uint64_t) mac[2] << 24ULL) |
+                             ((uint64_t) mac[3] << 16ULL) |
+                             ((uint64_t) mac[4] << 8ULL) |
+                             (uint64_t) mac[5] ) >> 16ULL;
+    }
+
+    lldp.dst_mac = hton64(0x0180c200000eULL) >> 16ULL;          
+    lldp.eth_type = hton16(LLDP_ETH_TYPE);
     lldp.chassis_id_header = lldp_tlv_header(LLDP_CHASSIS_ID_TLV, 7);
     lldp.chassis_id_sub    = LLDP_CHASSIS_ID_SUB_MAC;
-    // lower 48 bits of datapath id represents switch MAC address
+    // lower 48 bits of datapath id repiopresents switch MAC address
     lldp.chassis_id_sub_mac = hton64(dp->id()) >> 16;
-
     lldp.port_id_header = lldp_tlv_header(LLDP_PORT_ID_TLV, 5);
     lldp.port_id_sub    = LLDP_PORT_ID_SUB_COMPONENT;
     lldp.port_id_sub_component = hton32(port.port_no());
-
     lldp.ttl_header = lldp_tlv_header(LLDP_TTL_TLV, 2);
     lldp.ttl_seconds = hton16(c_poll_interval);
-
     lldp.dpid_header = lldp_tlv_header(127, 12);
     lldp.dpid_oui    = hton32(0x0026e1) >> 8; // OpenFlow
     lldp.dpid_sub    = 0;
     lldp.dpid_data   = hton64(dp->id());
-
     lldp.end = 0;
 
-    VLOG(5) << "Sending LLDP packet to " << port.name();
+    if (link_id != -1) {
+        auto pkt_inf = m_delay_manager->requestPacketOut(link_id);
+        memcpy(&(lldp.left_time), &(pkt_inf.second), sizeof(lldp.left_time));
+        lldp.id = pkt_inf.first;
+        std::cout << "Time packet sent from link " << link_id << " with id " << lldp.id << std::endl;
+    }
+
+    VLOG(5) << "Sending LLDP packet to " << port.name();    
+    //LOG(INFO) << "Sending LLDP packet from " << dp->id() << " to " << port.name();
+
     of13::PacketOut po;
     of13::OutputAction action(port.port_no(), of13::OFPCML_NO_BUFFER);
     po.buffer_id(OFP_NO_BUFFER);
+
     po.data(&lldp, sizeof lldp);
     po.add_action(action);
-
-    // Send packet 3 times to prevent drops
-    dp->send(&po);
-    dp->send(&po);
+    
     dp->send(&po);
 }
 
+
 OFMessageHandler::Action LinkDiscovery::Handler::processMiss(OFConnection *ofconn, Flow *flow)
 {
+    auto now = std::chrono::high_resolution_clock::now();
+
     if (flow->match(of13::EthType(LLDP_ETH_TYPE))) {
         Switch* sw = app->m_switch_manager->getSwitch(ofconn);
+
         if (sw == nullptr)
             return Stop;
 
@@ -202,16 +231,41 @@ OFMessageHandler::Action LinkDiscovery::Handler::processMiss(OFConnection *ofcon
 
         switch_and_port source;
         switch_and_port target;
-        source.dpid = ntoh64(lldp.dpid_data);
-        source.port = ntoh32(lldp.port_id_sub_component);
-        target.dpid = sw->id();
-        target.port = flow->pkt()->readInPort();
+
+        if (lldp.src_mac == 4) {
+            source.dpid = ntoh64(lldp.dpid_data);
+            source.port = ntoh32(lldp.port_id_sub_component);
+            target.dpid = sw->id();
+            target.port = flow->pkt()->readInPort();
+
+            if (!(source < target))
+                std::swap(source, target);
+
+            //emit app->m_delay_manager->observeLink(source, target);
+            app->m_delay_manager->observeLink(source, target);
+        }
+        else {
+            uint16_t link_id = ((lldp.src_mac & 0xFF) << 8) | ((lldp.src_mac >> 8) & 0xFF);
+            dm::Link *link = app->m_delay_manager->getLinkById(link_id);
+
+            source = link->from;
+            target = link->to;
+
+            uint64_t inow;
+            memcpy(&inow, &(now), sizeof(inow));
+            emit app->dmpRecieved(link_id, lldp.id, lldp.left_time, inow);
+        }
+
         try{
             DVLOG(5) << "LLDP packet received on " << sw->port(target.port).name();
         } catch (...) {}
 
         if (!(source < target))
-            std::swap(source, target);
+            return Stop;
+            //std::swap(source, target);
+   
+	    //std::cout << "Path from " << (int) source.dpid << " to " << (int) target.dpid << " spent " << std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(now - before).count() << " milliseconds\n";
+
         emit app->lldpReceived(source, target);
 
         return Stop;
@@ -231,7 +285,7 @@ DiscoveredLink::DiscoveredLink(switch_and_port const &source_,
 void LinkDiscovery::onLldpReceived(switch_and_port from, switch_and_port to)
 {
     DiscoveredLink link(from, to, std::chrono::steady_clock::now() +
-                        std::chrono::seconds(c_poll_interval * 2));
+                        std::chrono::seconds(c_poll_interval * 20));
     bool isNew = true;
 
     // Remove older edge
@@ -298,6 +352,7 @@ void LinkDiscovery::pollTimeout()
         for (of13::Port &port : sw->ports()) {
             if (port.port_no() > of13::OFPP_MAX)
                 continue;
+
             sendLLDP(sw, port);
         }
     }

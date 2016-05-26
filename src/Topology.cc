@@ -22,8 +22,9 @@
 #include <boost/graph/dijkstra_shortest_paths_no_color_map.hpp>
 
 #include "Common.hh"
+#include "tuple"
 
-REGISTER_APPLICATION(Topology, {"link-discovery", "rest-listener", ""})
+REGISTER_APPLICATION(Topology, {"switch-manager", "static-flow-pusher", "link-discovery", "delay-manager", "rest-listener", ""})
 
 using namespace boost;
 
@@ -31,23 +32,6 @@ struct link_property {
     switch_and_port source;
     switch_and_port target;
     int weight;
-};
-
-class Link : public AppObject {
-    switch_and_port source;
-    switch_and_port target;
-    int weight;
-    uint64_t obj_id;
-
-public:
-    Link(switch_and_port _source, switch_and_port _target, int _weight, uint64_t _id):
-        source(_source), target(_target), weight(_weight), obj_id(_id) {}
-
-    json11::Json to_json() const;
-    json11::Json to_floodlight_json() const;
-    uint64_t id() const;
-
-    friend class Topology;
 };
 
 uint64_t Link::id() const {
@@ -121,6 +105,10 @@ void Topology::init(Loader *loader, const Config &config)
     QObject::connect(ld, SIGNAL(linkBroken(switch_and_port, switch_and_port)),
                      this, SLOT(linkBroken(switch_and_port, switch_and_port)));
 
+    m_switch_manager = SwitchManager::get(loader);
+    m_flow_pusher    = StaticFlowPusher::get(loader);
+    m_delay_manager  = DelayManager::get(loader);
+
     RestListener::get(loader)->registerRestHandler(this);
     acceptPath(Method::GET, "links");
 }
@@ -135,14 +123,15 @@ Topology::~Topology()
     delete m;
 }
 
+
 void Topology::linkDiscovered(switch_and_port from, switch_and_port to)
 {
-    QWriteLocker locker(&m->graph_mutex);
-
     if (from.dpid == to.dpid) {
-        LOG(WARNING) << "Ignoring loopback link on " << FORMAT_DPID << from.dpid;
+        LOG(INFO) << "Ignoring loopback link on " << FORMAT_DPID << from.dpid;
         return;
     }
+    
+    QWriteLocker locker(&m->graph_mutex);
 
     /* TODO: calculate metric */
     auto u = m->vertex(from.dpid);
@@ -151,6 +140,7 @@ void Topology::linkDiscovered(switch_and_port from, switch_and_port to)
 
     Link* link = new Link(from, to, 5, rand()%1000 + 2000);
     topo.push_back(link);
+
     addEvent(Event::Add, link);
 }
 
